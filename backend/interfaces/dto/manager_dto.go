@@ -60,3 +60,20 @@ type SubordinatesResponse struct {
 	ManagerID    string           `json:"managerId"`
 	Subordinates []SubordinateDTO `json:"subordinates"`
 }
+
+// PostWorkshopComment represents a single free-text comment from a final post-workshop survey
+type PostWorkshopComment struct {
+	TeamID      string `json:"teamId"`
+	SessionID   string `json:"sessionId"`
+	DimensionID string `json:"dimensionId"`
+	Comment     string `json:"comment"`
+	Date        string `json:"date"`
+}
+
+// ManagerFinalPostWorkshopCommentsResponse represents final post-workshop comments
+// for all teams supervised by a manager, grouped by team
+type ManagerFinalPostWorkshopCommentsResponse struct {
+	ManagerID        string                           `json:"managerId"`
+	Comments         map[string][]PostWorkshopComment `json:"comments"`
+	AssessmentPeriod string                           `json:"assessmentPeriod,omitempty"`
+}

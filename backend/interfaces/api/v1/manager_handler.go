@@ -160,6 +160,47 @@ func (h *ManagerHandler) GetManagerTrends(c *gin.Context) {
 	dto.RespondSuccess(c, http.StatusOK, response)
 }
 
+// GetManagerFinalPostWorkshopComments handles GET /api/v1/managers/:managerId/dashboard/final-post-workshop-comments
+// Returns free-text comments from completed post-workshop surveys, grouped by team
+func (h *ManagerHandler) GetManagerFinalPostWorkshopComments(c *gin.Context) {
+	ctx := c.Request.Context()
+	managerID := c.Param("managerId")
+
+	if managerID == "" {
+		dto.RespondError(c, http.StatusBadRequest, "Manager ID is required")
+		return
+	}
+
+	assessmentPeriod := c.Query("assessmentPeriod")
+
+	telemetry.RecordManagerDashboardView(ctx, managerID, "final_post_workshop_comments")
+
+	comments, err := h.healthCheckRepo.FindFinalPostWorkshopComments(ctx, managerID, assessmentPeriod)
+	if err != nil {
+		dto.RespondErrorWithDetails(c, http.StatusInternalServerError, "Database query failed", err.Error())
+		return
+	}
+
+	grouped := make(map[string][]dto.PostWorkshopComment)
+	for _, comment := range comments {
+		grouped[comment.TeamID] = append(grouped[comment.TeamID], dto.PostWorkshopComment{
+			TeamID:      comment.TeamID,
+			SessionID:   comment.SessionID,
+			DimensionID: comment.DimensionID,
+			Comment:     comment.Comment,
+			Date:        comment.Date,
+		})
+	}
+
+	response := dto.ManagerFinalPostWorkshopCommentsResponse{
+		ManagerID:        managerID,
+		Comments:         grouped,
+		AssessmentPeriod: assessmentPeriod,
+	}
+
+	dto.RespondSuccess(c, http.StatusOK, response)
+}
+
 // GetSubordinates handles GET /api/v1/managers/:managerId/subordinates
 // Returns the full subordinate tree for org hierarchy display
 func (h *ManagerHandler) GetSubordinates(c *gin.Context) {

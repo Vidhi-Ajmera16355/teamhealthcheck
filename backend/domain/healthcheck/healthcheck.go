@@ -56,6 +56,16 @@ type DimensionSummary struct {
 	ResponseCount int     `json:"responseCount"`
 }
 
+// PostWorkshopComment represents a single free-text comment left on a final
+// post-workshop survey response
+type PostWorkshopComment struct {
+	TeamID      string `json:"teamId"`
+	SessionID   string `json:"sessionId"`
+	DimensionID string `json:"dimensionId"`
+	Comment     string `json:"comment"`
+	Date        string `json:"date"`
+}
+
 // Repository defines the interface for health check data access
 type Repository interface {
 	FindByID(ctx context.Context, id string) (*HealthCheckSession, error)
@@ -74,4 +84,8 @@ type Repository interface {
 
 	// FindDistinctAssessmentPeriods returns all unique assessment periods from submitted sessions
 	FindDistinctAssessmentPeriods(ctx context.Context) ([]string, error)
+
+	// FindFinalPostWorkshopComments retrieves free-text comments from completed
+	// post-workshop surveys for teams supervised by the given manager
+	FindFinalPostWorkshopComments(ctx context.Context, managerID string, assessmentPeriod string) ([]PostWorkshopComment, error)
 }

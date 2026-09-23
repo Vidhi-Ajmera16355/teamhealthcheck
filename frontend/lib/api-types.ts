@@ -124,6 +124,20 @@ export interface ManagerTrendsResponse {
   dimensions: DimensionTrend[];
 }
 
+export interface PostWorkshopComment {
+  teamId: string;
+  sessionId: string;
+  dimensionId: string;
+  comment: string;
+  date: string;
+}
+
+export interface ManagerFinalPostWorkshopCommentsResponse {
+  managerId: string;
+  comments: Record<string, PostWorkshopComment[]>;
+  assessmentPeriod?: string;
+}
+
 // =============================================================================
 // Common API Types
 // =============================================================================

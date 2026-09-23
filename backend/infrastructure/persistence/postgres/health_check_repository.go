@@ -532,6 +532,63 @@ func (r *HealthCheckRepository) FindDistinctAssessmentPeriods(ctx context.Contex
 	return periods, nil
 }
 
+// FindFinalPostWorkshopComments retrieves free-text comments from completed post_workshop
+// sessions for teams supervised by the given manager, scoped via team_supervisors and
+// optionally filtered by assessment period.
+func (r *HealthCheckRepository) FindFinalPostWorkshopComments(ctx context.Context, managerID string, assessmentPeriod string) ([]healthcheck.PostWorkshopComment, error) {
+	var query string
+	var rows *sql.Rows
+	var err error
+
+	if assessmentPeriod != "" {
+		query = `
+			SELECT s.team_id, s.id, r.dimension_id, r.comment, s.date
+			FROM health_check_sessions s
+			INNER JOIN team_supervisors ts ON s.team_id = ts.team_id
+			INNER JOIN health_check_responses r ON r.session_id = s.id
+			WHERE ts.user_id = $1 AND s.survey_type = 'post_workshop' AND s.completed = true
+				AND s.assessment_period = $2
+				AND r.comment IS NOT NULL AND TRIM(r.comment) <> ''
+			ORDER BY s.team_id, s.date DESC, r.dimension_id
+		`
+		rows, err = r.db.QueryContext(ctx, query, managerID, assessmentPeriod)
+	} else {
+		query = `
+			SELECT s.team_id, s.id, r.dimension_id, r.comment, s.date
+			FROM health_check_sessions s
+			INNER JOIN team_supervisors ts ON s.team_id = ts.team_id
+			INNER JOIN health_check_responses r ON r.session_id = s.id
+			WHERE ts.user_id = $1 AND s.survey_type = 'post_workshop' AND s.completed = true
+				AND r.comment IS NOT NULL AND TRIM(r.comment) <> ''
+			ORDER BY s.team_id, s.date DESC, r.dimension_id
+		`
+		rows, err = r.db.QueryContext(ctx, query, managerID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query final post-workshop comments: %w", err)
+	}
+	defer rows.Close()
+
+	var comments []healthcheck.PostWorkshopComment
+	for rows.Next() {
+		var comment healthcheck.PostWorkshopComment
+		if err := rows.Scan(&comment.TeamID, &comment.SessionID, &comment.DimensionID, &comment.Comment, &comment.Date); err != nil {
+			return nil, fmt.Errorf("failed to scan post-workshop comment: %w", err)
+		}
+		comments = append(comments, comment)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error: %w", err)
+	}
+
+	if comments == nil {
+		comments = []healthcheck.PostWorkshopComment{}
+	}
+
+	return comments, nil
+}
+
 // scanSessions is a helper function to scan query results into sessions
 func (r *HealthCheckRepository) scanSessions(ctx context.Context, query string, args ...interface{}) ([]*healthcheck.HealthCheckSession, error) {
 	rows, err := r.db.QueryContext(ctx, query, args...)

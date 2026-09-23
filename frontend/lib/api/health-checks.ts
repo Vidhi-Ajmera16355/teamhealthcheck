@@ -7,6 +7,7 @@
 
 import { API_BASE_URL, APIError, APIRequestError, apiRequest, handleResponse } from './client';
 import type { HealthCheckResponse, HealthCheckSession, HealthDimension } from '@/lib/types';
+import type { ManagerFinalPostWorkshopCommentsResponse } from '@/lib/api-types';
 
 // Re-export domain types from the canonical source for backwards compatibility
 export type { HealthCheckResponse, HealthCheckSession, HealthDimension };
@@ -154,6 +155,27 @@ export async function getAssessmentPeriods(): Promise<string[]> {
 
   const data = await handleResponse<{ periods: string[] }>(response);
   return data.periods;
+}
+
+/**
+ * Fetches final post-workshop survey comments for all teams supervised by a manager,
+ * grouped by team ID
+ *
+ * @param managerId Manager's user ID
+ * @param assessmentPeriod Optional assessment period filter
+ * @returns Manager final post-workshop comments response
+ */
+export async function getManagerFinalPostWorkshopComments(
+  managerId: string,
+  assessmentPeriod?: string
+): Promise<ManagerFinalPostWorkshopCommentsResponse> {
+  const url = assessmentPeriod
+    ? `${API_BASE_URL}/api/v1/managers/${managerId}/dashboard/final-post-workshop-comments?assessmentPeriod=${encodeURIComponent(assessmentPeriod)}`
+    : `${API_BASE_URL}/api/v1/managers/${managerId}/dashboard/final-post-workshop-comments`;
+
+  const response = await apiRequest(url);
+
+  return handleResponse<ManagerFinalPostWorkshopCommentsResponse>(response);
 }
 
 /**

@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import { getCurrentUser, logout, authenticatedFetch, User } from '@/lib/auth';
 import { HEALTH_DIMENSIONS } from '@/lib/data';
 import { API_BASE_URL } from '@/lib/api/client';
-import { getAssessmentPeriods } from '@/lib/api/health-checks';
+import { getAssessmentPeriods, getManagerFinalPostWorkshopComments } from '@/lib/api/health-checks';
+import type { PostWorkshopComment } from '@/lib/api-types';
 import { LogOut, Users, ChevronDown, AlertCircle, Activity, LineChart as LineChartIcon, CheckCircle, Clock, ClipboardList, TrendingUp, TrendingDown, Minus, LayoutGrid, Download, ListTodo } from 'lucide-react';
 import { RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import OnboardingModal from '@/components/OnboardingModal';
@@ -127,6 +128,10 @@ export default function ManagerPage() {
   const [selectedPeriod, setSelectedPeriod] = useState<string>('');
   const [assessmentPeriodOptions, setAssessmentPeriodOptions] = useState<string[]>([]);
   const [expandedTeam, setExpandedTeam] = useState<string | null>(null);
+  const [expandedTeamComments, setExpandedTeamComments] = useState<Set<string>>(new Set());
+  const [postWorkshopComments, setPostWorkshopComments] = useState<Record<string, PostWorkshopComment[]> | null>(null);
+  const [postWorkshopCommentsLoading, setPostWorkshopCommentsLoading] = useState(false);
+  const [postWorkshopCommentsError, setPostWorkshopCommentsError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabView>('teams');
   const [selectedTeamsForComparison, setSelectedTeamsForComparison] = useState<string[]>([]);
 
@@ -218,6 +223,32 @@ export default function ManagerPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchFinalPostWorkshopComments = async (managerId: string, assessmentPeriod: string) => {
+    setPostWorkshopCommentsLoading(true);
+    setPostWorkshopCommentsError(null);
+    try {
+      const data = await getManagerFinalPostWorkshopComments(managerId, assessmentPeriod || undefined);
+      setPostWorkshopComments(data.comments || {});
+    } catch (err) {
+      setPostWorkshopCommentsError('Unable to load final post-workshop comments.');
+      console.error('Error fetching final post-workshop comments:', err);
+    } finally {
+      setPostWorkshopCommentsLoading(false);
+    }
+  };
+
+  const toggleTeamComments = (teamId: string) => {
+    setExpandedTeamComments((prev) => {
+      const next = new Set(prev);
+      if (next.has(teamId)) {
+        next.delete(teamId);
+      } else {
+        next.add(teamId);
+      }
+      return next;
+    });
   };
 
   const fetchSubordinates = async (managerId: string) => {
@@ -323,6 +354,13 @@ export default function ManagerPage() {
       fetchDashboardData(user.id, period);
       if (activeTab === 'radar') {
         fetchRadarData(user.id, period);
+      }
+      // Invalidate cached comments so they are refetched (lazily, on next expand)
+      // for the newly selected assessment period.
+      setPostWorkshopComments(null);
+      setPostWorkshopCommentsError(null);
+      if (expandedTeam) {
+        fetchFinalPostWorkshopComments(user.id, period);
       }
     }
   };
@@ -953,50 +991,112 @@ export default function ManagerPage() {
                 {/* Dimension Breakdown */}
                 {team.dimensions.length > 0 && (
                   <div className="mt-4 pt-4 border-t">
-                    <button
-                      data-testid="view-details-button"
-                      onClick={() =>
-                        setExpandedTeam(expandedTeam === team.teamId ? null : team.teamId)
-                      }
-                      className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
-                    >
-                      <ChevronDown
-                        className={`w-4 h-4 transition-transform ${
-                          expandedTeam === team.teamId ? 'rotate-180' : ''
-                        }`}
-                      />
-                      {expandedTeam === team.teamId ? 'Hide' : 'View'} Dimension Details (
-                      {team.dimensions.length})
-                    </button>
+                    <div className="flex items-center justify-between">
+                      <button
+                        data-testid="view-details-button"
+                        onClick={() => {
+                          const next = expandedTeam === team.teamId ? null : team.teamId;
+                          setExpandedTeam(next);
+                          if (next && user && postWorkshopComments === null && !postWorkshopCommentsLoading) {
+                            fetchFinalPostWorkshopComments(user.id, selectedPeriod);
+                          }
+                        }}
+                        className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+                      >
+                        <ChevronDown
+                          className={`w-4 h-4 transition-transform ${
+                            expandedTeam === team.teamId ? 'rotate-180' : ''
+                          }`}
+                        />
+                        {expandedTeam === team.teamId ? 'Hide' : 'View'} Dimension Details (
+                        {team.dimensions.length})
+                      </button>
+
+                      {expandedTeam === team.teamId &&
+                        !postWorkshopCommentsLoading &&
+                        !postWorkshopCommentsError &&
+                        (postWorkshopComments?.[team.teamId] || []).some(
+                          (c) => typeof c.comment === 'string' && c.comment.trim().length > 0
+                        ) && (
+                          <button
+                            data-testid="team-comments-toggle"
+                            onClick={() => toggleTeamComments(team.teamId)}
+                            className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-800 font-medium"
+                          >
+                            <ChevronDown
+                              className={`w-4 h-4 transition-transform ${
+                                expandedTeamComments.has(team.teamId) ? 'rotate-180' : ''
+                              }`}
+                            />
+                            {expandedTeamComments.has(team.teamId) ? 'Hide Comments' : 'Show Comments'}
+                          </button>
+                        )}
+                    </div>
 
                     {expandedTeam === team.teamId && (
-                      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {team.dimensions.map((dimension) => (
-                          <div
-                            key={dimension.dimensionId}
-                            className="bg-gray-50 rounded-lg p-3 border"
-                          >
-                            <div className="flex justify-between items-center mb-1">
-                              <h4 className="font-medium text-gray-900 capitalize text-sm">
-                                {dimension.dimensionId === 'value'
-                                  ? 'Delivering Value'
-                                  : dimension.dimensionId}
-                              </h4>
-                              <span
-                                className={`text-lg font-bold px-2 py-1 rounded ${getHealthColor(
-                                  dimension.avgScore
-                                )}`}
-                              >
-                                {formatHealthScore(dimension.avgScore)}
-                              </span>
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              {dimension.responseCount}{' '}
-                              {dimension.responseCount === 1 ? 'response' : 'responses'}
-                            </div>
+                      <>
+                        {postWorkshopCommentsLoading && (
+                          <div className="mt-3 text-xs text-gray-400 italic">
+                            Loading post-workshop comments...
                           </div>
-                        ))}
-                      </div>
+                        )}
+
+                        {!postWorkshopCommentsLoading && postWorkshopCommentsError && (
+                          <div className="mt-3 text-xs text-red-600">{postWorkshopCommentsError}</div>
+                        )}
+
+                        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {team.dimensions.map((dimension) => {
+                            const dimComment = (postWorkshopComments?.[team.teamId] || []).find(
+                              (c) =>
+                                c.dimensionId === dimension.dimensionId &&
+                                typeof c.comment === 'string' &&
+                                c.comment.trim().length > 0
+                            );
+                            const showComment =
+                              expandedTeamComments.has(team.teamId) && Boolean(dimComment);
+
+                            return (
+                              <div
+                                key={dimension.dimensionId}
+                                data-testid="dimension-detail-card"
+                                className="bg-gray-50 rounded-lg p-3 border"
+                              >
+                                <div className="flex justify-between items-center mb-1">
+                                  <h4 className="font-medium text-gray-900 capitalize text-sm">
+                                    {dimension.dimensionId === 'value'
+                                      ? 'Delivering Value'
+                                      : dimension.dimensionId}
+                                  </h4>
+                                  <span
+                                    className={`text-lg font-bold px-2 py-1 rounded ${getHealthColor(
+                                      dimension.avgScore
+                                    )}`}
+                                  >
+                                    {formatHealthScore(dimension.avgScore)}
+                                  </span>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                  {dimension.responseCount}{' '}
+                                  {dimension.responseCount === 1 ? 'response' : 'responses'}
+                                </div>
+
+                                {showComment && (
+                                  <div
+                                    data-testid="dimension-detail-comment"
+                                    className="mt-2 pt-2 border-t border-gray-200"
+                                  >
+                                    <div className="text-xs font-medium text-gray-500 mb-1">
+                                      Post-Workshop Comment
+                                    </div>
+                                    <p className="text-sm text-gray-800">{dimComment?.comment}</p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
                     )}
                   </div>
                 )}
