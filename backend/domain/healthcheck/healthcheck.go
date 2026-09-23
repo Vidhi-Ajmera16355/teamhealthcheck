@@ -1,12 +1,18 @@
 package healthcheck
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Survey type constants
 const (
 	SurveyTypeIndividual   = "individual"
 	SurveyTypePostWorkshop = "post_workshop"
 )
+
+// ErrDraftNotFound is returned when no draft exists for the requested user/team/surveyType
+var ErrDraftNotFound = errors.New("draft not found")
 
 // HealthCheckResponse represents a single dimension response
 type HealthCheckResponse struct {
@@ -27,6 +33,22 @@ type HealthCheckSession struct {
 	SurveyType       string                `json:"surveyType,omitempty"`
 	Responses        []HealthCheckResponse `json:"responses"`
 	Completed        bool                  `json:"completed"`
+}
+
+// HealthCheckDraft represents a participant's in-progress (not yet submitted) survey answers.
+// Persisted server-side so progress can be resumed on another browser or device.
+type HealthCheckDraft struct {
+	ID               string                `json:"id"`
+	TeamID           string                `json:"teamId"`
+	UserID           string                `json:"userId"`
+	SurveyType       string                `json:"surveyType"`
+	AssessmentPeriod string                `json:"assessmentPeriod"`
+	CurrentDimension int                   `json:"currentDimension"`
+	Responses        []HealthCheckResponse `json:"responses"`
+	// ClientUpdatedAt is a client-supplied epoch-millis timestamp used for last-write-wins
+	// ordering, so a stale save that arrives after a newer one never overwrites it.
+	ClientUpdatedAt int64  `json:"clientUpdatedAt"`
+	UpdatedAt       string `json:"updatedAt,omitempty"`
 }
 
 // TeamHealthSummary represents aggregated health data for a team
@@ -74,4 +96,14 @@ type Repository interface {
 
 	// FindDistinctAssessmentPeriods returns all unique assessment periods from submitted sessions
 	FindDistinctAssessmentPeriods(ctx context.Context) ([]string, error)
+
+	// SaveDraft upserts an in-progress survey draft, keyed by (userID, teamID, surveyType).
+	// A save with a ClientUpdatedAt older than what is already stored is silently ignored.
+	SaveDraft(ctx context.Context, draft *HealthCheckDraft) error
+
+	// GetDraft returns the draft for the given user/team/surveyType, or ErrDraftNotFound if none exists.
+	GetDraft(ctx context.Context, userID, teamID, surveyType string) (*HealthCheckDraft, error)
+
+	// DeleteDraft removes the draft for the given user/team/surveyType, if any.
+	DeleteDraft(ctx context.Context, userID, teamID, surveyType string) error
 }
