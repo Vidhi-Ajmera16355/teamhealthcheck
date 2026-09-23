@@ -3,7 +3,9 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/agopalakrishnan/teams360/backend/domain/healthcheck"
 )
@@ -530,6 +532,98 @@ func (r *HealthCheckRepository) FindDistinctAssessmentPeriods(ctx context.Contex
 	}
 
 	return periods, nil
+}
+
+// draftID deterministically derives the primary key for a draft from its natural key,
+// matching the UNIQUE(user_id, team_id, survey_type) constraint.
+func draftID(userID, teamID, surveyType string) string {
+	return fmt.Sprintf("draft-%s-%s-%s", userID, teamID, surveyType)
+}
+
+// SaveDraft upserts an in-progress survey draft. The WHERE clause on the DO UPDATE makes this
+// last-write-wins: if the stored draft already has a newer (or equal) ClientUpdatedAt, this
+// save is silently dropped instead of overwriting it.
+func (r *HealthCheckRepository) SaveDraft(ctx context.Context, draft *healthcheck.HealthCheckDraft) error {
+	surveyType := draft.SurveyType
+	if surveyType == "" {
+		surveyType = healthcheck.SurveyTypeIndividual
+	}
+	draft.SurveyType = surveyType
+	draft.ID = draftID(draft.UserID, draft.TeamID, surveyType)
+
+	responsesJSON, err := json.Marshal(draft.Responses)
+	if err != nil {
+		return fmt.Errorf("failed to marshal draft responses: %w", err)
+	}
+
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO health_check_drafts (
+			id, team_id, user_id, survey_type, assessment_period, current_dimension, responses, client_updated_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, CURRENT_TIMESTAMP)
+		ON CONFLICT (id) DO UPDATE SET
+			assessment_period = EXCLUDED.assessment_period,
+			current_dimension = EXCLUDED.current_dimension,
+			responses = EXCLUDED.responses,
+			client_updated_at = EXCLUDED.client_updated_at,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE health_check_drafts.client_updated_at <= EXCLUDED.client_updated_at
+	`, draft.ID, draft.TeamID, draft.UserID, surveyType, draft.AssessmentPeriod, draft.CurrentDimension, responsesJSON, draft.ClientUpdatedAt)
+
+	if err != nil {
+		return fmt.Errorf("failed to save draft: %w", err)
+	}
+
+	return nil
+}
+
+// GetDraft returns the draft for the given user/team/surveyType, or healthcheck.ErrDraftNotFound if none exists.
+func (r *HealthCheckRepository) GetDraft(ctx context.Context, userID, teamID, surveyType string) (*healthcheck.HealthCheckDraft, error) {
+	if surveyType == "" {
+		surveyType = healthcheck.SurveyTypeIndividual
+	}
+	id := draftID(userID, teamID, surveyType)
+
+	var draft healthcheck.HealthCheckDraft
+	var responsesJSON []byte
+	var updatedAt time.Time
+
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id, team_id, user_id, survey_type, assessment_period, current_dimension, responses, client_updated_at, updated_at
+		FROM health_check_drafts
+		WHERE id = $1
+	`, id).Scan(
+		&draft.ID, &draft.TeamID, &draft.UserID, &draft.SurveyType, &draft.AssessmentPeriod,
+		&draft.CurrentDimension, &responsesJSON, &draft.ClientUpdatedAt, &updatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, healthcheck.ErrDraftNotFound
+		}
+		return nil, fmt.Errorf("failed to query draft: %w", err)
+	}
+
+	if err := json.Unmarshal(responsesJSON, &draft.Responses); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal draft responses: %w", err)
+	}
+	draft.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
+
+	return &draft, nil
+}
+
+// DeleteDraft removes the draft for the given user/team/surveyType, if any. It is not an error
+// for no draft to exist (e.g. it was already cleaned up by a prior successful submission).
+func (r *HealthCheckRepository) DeleteDraft(ctx context.Context, userID, teamID, surveyType string) error {
+	if surveyType == "" {
+		surveyType = healthcheck.SurveyTypeIndividual
+	}
+	id := draftID(userID, teamID, surveyType)
+
+	_, err := r.db.ExecContext(ctx, "DELETE FROM health_check_drafts WHERE id = $1", id)
+	if err != nil {
+		return fmt.Errorf("failed to delete draft: %w", err)
+	}
+
+	return nil
 }
 
 // scanSessions is a helper function to scan query results into sessions

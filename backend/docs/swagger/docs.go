@@ -1731,6 +1731,120 @@ const docTemplate = `{
                 }
             }
         },
+        "/health-checks/draft": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the authenticated user's saved in-progress survey answers for the given team and survey type, so it can be restored on any browser or device. Returns 404 if no draft exists. Only the authenticated user may fetch their own draft.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health Checks"
+                ],
+                "summary": "Fetch the current in-progress survey draft",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Team ID",
+                        "name": "teamId",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "User ID (must match the authenticated user)",
+                        "name": "userId",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Survey type: individual (default) or post_workshop",
+                        "name": "surveyType",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/DraftResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Missing teamId or userId",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot fetch another user's draft",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "No draft found",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upserts the authenticated user's in-progress survey answers for a team and assessment period, so progress can be resumed on another browser or device. Only the authenticated user may save their own draft. Concurrent saves are resolved last-write-wins using the client-supplied clientUpdatedAt timestamp: an update older than what is already stored is silently ignored rather than overwriting newer data.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Health Checks"
+                ],
+                "summary": "Save or update an in-progress survey draft",
+                "parameters": [
+                    {
+                        "description": "Draft payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SaveDraftRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/DraftResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid request body or command failure",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Cannot save another user's draft",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/health-checks/team/{id}": {
             "get": {
                 "security": [
@@ -3273,6 +3387,63 @@ const docTemplate = `{
             },
             "type": "object"
         },
+        "DraftResponse": {
+            "properties": {
+                "assessmentPeriod": {
+                    "type": "string"
+                },
+                "clientUpdatedAt": {
+                    "type": "integer"
+                },
+                "currentDimension": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "responses": {
+                    "items": {
+                        "$ref": "#/definitions/HealthCheckResponseResponse"
+                    },
+                    "type": "array"
+                },
+                "surveyType": {
+                    "type": "string"
+                },
+                "teamId": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            },
+            "type": "object"
+        },
+        "DraftResponseRequest": {
+            "properties": {
+                "comment": {
+                    "type": "string"
+                },
+                "dimensionId": {
+                    "type": "string"
+                },
+                "score": {
+                    "maximum": 3,
+                    "minimum": 0,
+                    "type": "integer"
+                },
+                "trend": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "dimensionId"
+            ],
+            "type": "object"
+        },
         "ErrorResponse": {
             "properties": {
                 "code": {
@@ -3900,6 +4071,41 @@ const docTemplate = `{
             "required": [
                 "code",
                 "code_verifier"
+            ],
+            "type": "object"
+        },
+        "SaveDraftRequest": {
+            "properties": {
+                "assessmentPeriod": {
+                    "type": "string"
+                },
+                "clientUpdatedAt": {
+                    "type": "integer"
+                },
+                "currentDimension": {
+                    "type": "integer"
+                },
+                "responses": {
+                    "items": {
+                        "$ref": "#/definitions/DraftResponseRequest"
+                    },
+                    "type": "array"
+                },
+                "surveyType": {
+                    "type": "string"
+                },
+                "teamId": {
+                    "type": "string"
+                },
+                "userId": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "assessmentPeriod",
+                "clientUpdatedAt",
+                "teamId",
+                "userId"
             ],
             "type": "object"
         },

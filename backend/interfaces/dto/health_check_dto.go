@@ -33,6 +33,39 @@ type HealthCheckSessionResponse struct {
 	CreatedAt        string                        `json:"createdAt,omitempty"`
 } //@name HealthCheckSessionResponse
 
+// SaveDraftRequest represents the request payload for autosaving an in-progress survey draft.
+// Responses may be partial (score 0 = unanswered), since the survey is not yet complete.
+type SaveDraftRequest struct {
+	TeamID           string                 `json:"teamId" binding:"required"`
+	UserID           string                 `json:"userId" binding:"required"`
+	SurveyType       string                 `json:"surveyType,omitempty"`
+	AssessmentPeriod string                 `json:"assessmentPeriod" binding:"required"`
+	CurrentDimension int                    `json:"currentDimension"`
+	Responses        []DraftResponseRequest `json:"responses" binding:"dive"`
+	ClientUpdatedAt  int64                  `json:"clientUpdatedAt" binding:"required"`
+} //@name SaveDraftRequest
+
+// DraftResponseRequest represents a single, possibly-incomplete dimension response within a draft
+type DraftResponseRequest struct {
+	DimensionID string `json:"dimensionId" binding:"required"`
+	Score       int    `json:"score" binding:"min=0,max=3"`
+	Trend       string `json:"trend,omitempty"`
+	Comment     string `json:"comment,omitempty"`
+} //@name DraftResponseRequest
+
+// DraftResponse represents an in-progress survey draft returned to the client
+type DraftResponse struct {
+	ID               string                        `json:"id"`
+	TeamID           string                        `json:"teamId"`
+	UserID           string                        `json:"userId"`
+	SurveyType       string                        `json:"surveyType"`
+	AssessmentPeriod string                        `json:"assessmentPeriod"`
+	CurrentDimension int                           `json:"currentDimension"`
+	Responses        []HealthCheckResponseResponse `json:"responses"`
+	ClientUpdatedAt  int64                         `json:"clientUpdatedAt"`
+	UpdatedAt        string                        `json:"updatedAt,omitempty"`
+} //@name DraftResponse
+
 // TeamSubmissionStatusResponse represents the submission status for post-workshop surveys
 type TeamSubmissionStatusResponse struct {
 	TeamID             string `json:"teamId"`

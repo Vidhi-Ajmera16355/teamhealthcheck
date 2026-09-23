@@ -41,6 +41,33 @@ export interface HealthCheckSessionsResponse {
   total: number;
 }
 
+/**
+ * Payload for autosaving an in-progress survey draft.
+ * `clientUpdatedAt` is an epoch-millis timestamp used by the server for
+ * last-write-wins ordering, so a stale save can never clobber a newer one.
+ */
+export interface SaveDraftPayload {
+  teamId: string;
+  userId: string;
+  surveyType?: 'individual' | 'post_workshop';
+  assessmentPeriod: string;
+  currentDimension: number;
+  responses: HealthCheckResponse[];
+  clientUpdatedAt: number;
+}
+
+export interface DraftRecord {
+  id: string;
+  teamId: string;
+  userId: string;
+  surveyType: 'individual' | 'post_workshop';
+  assessmentPeriod: string;
+  currentDimension: number;
+  responses: HealthCheckResponse[];
+  clientUpdatedAt: number;
+  updatedAt?: string;
+}
+
 // Re-export APIError and APIRequestError for backwards compatibility
 export type { APIError };
 export { APIRequestError as HealthCheckAPIError };
@@ -110,6 +137,47 @@ export async function getTeamHealthChecks(
 
   const data = await handleResponse<HealthCheckSessionsResponse>(response);
   return data.sessions;
+}
+
+/**
+ * Saves (upserts) the current user's in-progress survey draft to the server,
+ * so it can be restored on another browser or device. Callers should treat a
+ * rejected promise as non-fatal and keep relying on the localStorage fallback
+ * (e.g. the API being temporarily unreachable).
+ *
+ * @param payload Draft contents plus a client-generated `clientUpdatedAt` timestamp
+ * @returns The persisted draft record
+ */
+export async function saveDraft(payload: SaveDraftPayload): Promise<DraftRecord> {
+  const response = await apiRequest(`${API_BASE_URL}/api/v1/health-checks/draft`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+
+  return handleResponse<DraftRecord>(response);
+}
+
+/**
+ * Fetches the current user's in-progress survey draft for a team/survey type.
+ *
+ * @returns The draft record, or null if none exists (404) or the request otherwise fails
+ * to reach the server (so callers can fall back to localStorage).
+ */
+export async function getDraft(
+  teamId: string,
+  userId: string,
+  surveyType: 'individual' | 'post_workshop' = 'individual'
+): Promise<DraftRecord | null> {
+  const params = new URLSearchParams({ teamId, userId, surveyType });
+  const response = await apiRequest(
+    `${API_BASE_URL}/api/v1/health-checks/draft?${params.toString()}`
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  return handleResponse<DraftRecord>(response);
 }
 
 /**
