@@ -99,6 +99,8 @@ export interface DimensionSummary {
   dimensionId: string;
   avgScore: number;
   responseCount: number;
+  /** Trend from the final post-workshop response, if one exists for this team+dimension. */
+  trend?: 'improving' | 'stable' | 'declining' | string;
 }
 
 // =============================================================================
@@ -135,6 +137,13 @@ export interface PostWorkshopComment {
 export interface ManagerFinalPostWorkshopCommentsResponse {
   managerId: string;
   comments: Record<string, PostWorkshopComment[]>;
+  assessmentPeriod?: string;
+}
+
+export interface ManagerMemberOverviewResponse {
+  managerId: string;
+  teamId?: string;
+  teams: TeamHealthSummary[];
   assessmentPeriod?: string;
 }
 

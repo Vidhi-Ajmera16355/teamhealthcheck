@@ -15,6 +15,9 @@ type DimensionSummary struct {
 	DimensionID   string  `json:"dimensionId"`
 	AvgScore      float64 `json:"avgScore"`
 	ResponseCount int     `json:"responseCount"`
+	// Trend is the trend value ("improving", "stable", "declining") from the
+	// final completed post-workshop response for this team+dimension, if any.
+	Trend string `json:"trend,omitempty"`
 }
 
 // ManagerTeamsHealthResponse represents the response for manager's teams health
@@ -76,4 +79,14 @@ type ManagerFinalPostWorkshopCommentsResponse struct {
 	ManagerID        string                           `json:"managerId"`
 	Comments         map[string][]PostWorkshopComment `json:"comments"`
 	AssessmentPeriod string                           `json:"assessmentPeriod,omitempty"`
+}
+
+// ManagerMemberOverviewResponse represents aggregated health data based only on
+// individual team-member survey submissions (no post-workshop data), optionally
+// scoped to a single team
+type ManagerMemberOverviewResponse struct {
+	ManagerID        string              `json:"managerId"`
+	TeamID           string              `json:"teamId,omitempty"`
+	Teams            []TeamHealthSummary `json:"teams"`
+	AssessmentPeriod string              `json:"assessmentPeriod,omitempty"`
 }

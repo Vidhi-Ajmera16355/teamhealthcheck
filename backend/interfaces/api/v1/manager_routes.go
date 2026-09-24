@@ -24,6 +24,7 @@ func SetupManagerRoutes(router *gin.Engine, healthCheckRepo healthcheck.Reposito
 		managers.GET("/:managerId/dashboard/radar", handler.GetManagerAggregatedRadar)
 		managers.GET("/:managerId/dashboard/trends", handler.GetManagerTrends)
 		managers.GET("/:managerId/dashboard/final-post-workshop-comments", handler.GetManagerFinalPostWorkshopComments)
+		managers.GET("/:managerId/dashboard/member-overview", handler.GetManagerMemberOverview)
 		managers.GET("/:managerId/subordinates", handler.GetSubordinates)
 	}
 }

@@ -59,6 +59,7 @@ func (h *ManagerHandler) GetManagerTeamsHealth(c *gin.Context) {
 				DimensionID:   dim.DimensionID,
 				AvgScore:      dim.AvgScore,
 				ResponseCount: dim.ResponseCount,
+				Trend:         dim.Trend,
 			}
 		}
 
@@ -195,6 +196,57 @@ func (h *ManagerHandler) GetManagerFinalPostWorkshopComments(c *gin.Context) {
 	response := dto.ManagerFinalPostWorkshopCommentsResponse{
 		ManagerID:        managerID,
 		Comments:         grouped,
+		AssessmentPeriod: assessmentPeriod,
+	}
+
+	dto.RespondSuccess(c, http.StatusOK, response)
+}
+
+// GetManagerMemberOverview returns aggregated individual member survey data, optionally scoped by teamId
+func (h *ManagerHandler) GetManagerMemberOverview(c *gin.Context) {
+	ctx := c.Request.Context()
+	managerID := c.Param("managerId")
+
+	if managerID == "" {
+		dto.RespondError(c, http.StatusBadRequest, "Manager ID is required")
+		return
+	}
+
+	teamID := c.Query("teamId")
+	assessmentPeriod := c.Query("assessmentPeriod")
+
+	telemetry.RecordManagerDashboardView(ctx, managerID, "member_overview")
+
+	teamSummaries, err := h.healthCheckRepo.FindMemberOverviewByManager(ctx, managerID, teamID, assessmentPeriod)
+	if err != nil {
+		dto.RespondErrorWithDetails(c, http.StatusInternalServerError, "Database query failed", err.Error())
+		return
+	}
+
+	teams := make([]dto.TeamHealthSummary, len(teamSummaries))
+	for i, summary := range teamSummaries {
+		dimensions := make([]dto.DimensionSummary, len(summary.Dimensions))
+		for j, dim := range summary.Dimensions {
+			dimensions[j] = dto.DimensionSummary{
+				DimensionID:   dim.DimensionID,
+				AvgScore:      dim.AvgScore,
+				ResponseCount: dim.ResponseCount,
+			}
+		}
+
+		teams[i] = dto.TeamHealthSummary{
+			TeamID:          summary.TeamID,
+			TeamName:        summary.TeamName,
+			SubmissionCount: summary.SubmissionCount,
+			OverallHealth:   summary.OverallHealth,
+			Dimensions:      dimensions,
+		}
+	}
+
+	response := dto.ManagerMemberOverviewResponse{
+		ManagerID:        managerID,
+		TeamID:           teamID,
+		Teams:            teams,
 		AssessmentPeriod: assessmentPeriod,
 	}
 
