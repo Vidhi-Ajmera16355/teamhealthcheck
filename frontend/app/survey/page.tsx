@@ -121,7 +121,6 @@ function SurveyPageContent() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [draftRestored, setDraftRestored] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const draftInitialized = useRef(false);
   const [teamOptions, setTeamOptions] = useState<{id: string, name: string}[]>([]);
   const [showHelpPanel, setShowHelpPanel] = useState(false);
@@ -139,9 +138,9 @@ function SurveyPageContent() {
 
   // Persists the draft to localStorage (always) and the server (best-effort).
   // Takes explicit args rather than reading from closures so it's safe to call
-  // from a debounced timeout, the team-switch flush, or a manual "Save Draft" click.
-  // Wrapped in useCallback with a stable identity (only surveyType as a dep) so effects
-  // that depend on it don't re-run every render.
+  // from the "Next" click, the team-switch flush, or a manual "Save Draft" click.
+  // Wrapped in useCallback with a stable identity (only surveyType as a dep) so callers
+  // that depend on it don't get a new function identity every render.
   const persistDraft = useCallback((
     targetUser: any,
     targetTeam: TeamInfo,
@@ -234,11 +233,7 @@ function SurveyPageContent() {
   const handleTeamSwitch = (newTeamId: string) => {
     if (!user || !team) return;
 
-    // Flush any pending draft save for the current team before switching
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
+    // Flush the current draft state for the current team before switching
     if (responses.length > 0 && draftInitialized.current && !submitted) {
       persistDraft(user, team, responses, currentDimension);
     }
@@ -277,30 +272,9 @@ function SurveyPageContent() {
       });
   };
 
-  // Autosave draft to localStorage and the server (debounced). localStorage remains
-  // the offline/optimistic fallback; the server save is best-effort and never blocks
-  // or surfaces an error to the user if the API is unreachable.
-  useEffect(() => {
-    if (!user || !team || !draftInitialized.current || submitted) return;
-    if (responses.length === 0) return;
-
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      persistDraft(user, team, responses, currentDimension);
-    }, 300);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [responses, currentDimension, user, team, submitted, persistDraft]);
-
-  // Manual "Save Draft" button: forces an immediate save instead of waiting for the debounce.
+  // Manual "Save Draft" button: saves immediately, independent of the "Next" flow.
   const handleManualSaveDraft = () => {
     if (!user || !team || responses.length === 0) return;
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
     persistDraft(user, team, responses, currentDimension);
   };
 
@@ -396,7 +370,13 @@ function SurveyPageContent() {
     // Clear validation error and proceed
     setValidationError(null);
     if (currentDimension < HEALTH_DIMENSIONS.length - 1) {
-      setCurrentDimension(currentDimension + 1);
+      const nextDimension = currentDimension + 1;
+      setCurrentDimension(nextDimension);
+      // Draft is only saved on "Next" (not on every score/trend/comment change),
+      // so the user always has a clear, predictable moment when their progress is stored.
+      if (user && team && !submitted) {
+        persistDraft(user, team, responses, nextDimension);
+      }
     }
   };
 
@@ -664,7 +644,7 @@ function SurveyPageContent() {
               >
                 <div className="flex items-center gap-2">
                   <Info className="w-4 h-4 flex-shrink-0" />
-                  <span>Your previous progress has been restored from a saved draft.</span>
+                  <span>Your progress is saved automatically each time you click Next — or click Save Draft anytime.</span>
                 </div>
                 <button
                   onClick={() => setDraftRestored(false)}
