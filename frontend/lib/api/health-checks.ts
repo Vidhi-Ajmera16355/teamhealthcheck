@@ -42,9 +42,10 @@ export interface HealthCheckSessionsResponse {
 }
 
 /**
- * Payload for autosaving an in-progress survey draft.
- * `clientUpdatedAt` is an epoch-millis timestamp used by the server for
- * last-write-wins ordering, so a stale save can never clobber a newer one.
+ * Payload for autosaving an in-progress survey draft. Saves always overwrite (last write wins by
+ * arrival order at the server) -- only one user is ever editing their own draft, so there is
+ * nothing to reconcile a conflict against. `clientUpdatedAt` is optional display-only metadata
+ * (epoch-millis, e.g. "saved 5s ago") and never affects ordering.
  */
 export interface SaveDraftPayload {
   teamId: string;
@@ -53,7 +54,7 @@ export interface SaveDraftPayload {
   assessmentPeriod: string;
   currentDimension: number;
   responses: HealthCheckResponse[];
-  clientUpdatedAt: number;
+  clientUpdatedAt?: number;
 }
 
 export interface DraftRecord {
@@ -64,7 +65,7 @@ export interface DraftRecord {
   assessmentPeriod: string;
   currentDimension: number;
   responses: HealthCheckResponse[];
-  clientUpdatedAt: number;
+  clientUpdatedAt?: number;
   updatedAt?: string;
 }
 
@@ -160,8 +161,11 @@ export async function saveDraft(payload: SaveDraftPayload): Promise<DraftRecord>
 /**
  * Fetches the current user's in-progress survey draft for a team/survey type.
  *
- * @returns The draft record, or null if none exists (404) or the request otherwise fails
- * to reach the server (so callers can fall back to localStorage).
+ * Returns null when no draft exists (404) or when the request could not reach the server at all
+ * (a network-level failure, e.g. offline/unreachable) — both are treated as "no server draft
+ * available right now" so callers can fall back to localStorage. Any other HTTP failure (401,
+ * 403, 500, ...) is a real error and is rethrown rather than silently swallowed, so a caller
+ * doesn't mistake an auth or server failure for "no draft exists".
  */
 export async function getDraft(
   teamId: string,
@@ -169,9 +173,14 @@ export async function getDraft(
   surveyType: 'individual' | 'post_workshop' = 'individual'
 ): Promise<DraftRecord | null> {
   const params = new URLSearchParams({ teamId, userId, surveyType });
-  const response = await apiRequest(
-    `${API_BASE_URL}/api/v1/health-checks/draft?${params.toString()}`
-  );
+
+  let response: Response;
+  try {
+    response = await apiRequest(`${API_BASE_URL}/api/v1/health-checks/draft?${params.toString()}`);
+  } catch {
+    // apiRequest/fetch itself threw — a network-level failure, not an HTTP response.
+    return null;
+  }
 
   if (response.status === 404) {
     return null;

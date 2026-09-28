@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -51,7 +52,7 @@ type HealthCheckHandler struct {
 func NewHealthCheckHandler(repository healthcheck.Repository, orgRepo organization.Repository, notificationService *services.NotificationService) *HealthCheckHandler {
 	return &HealthCheckHandler{
 		submitHandler:       commands.NewSubmitHealthCheckHandler(repository),
-		saveDraftHandler:    commands.NewSaveDraftHandler(repository),
+		saveDraftHandler:    commands.NewSaveDraftHandler(repository, orgRepo),
 		dimensionsHandler:   queries.NewGetHealthDimensionsHandler(orgRepo),
 		teamSessionsHandler: queries.NewGetTeamSessionsHandler(repository),
 		getDraftHandler:     queries.NewGetDraftHandler(repository),
@@ -116,6 +117,18 @@ func (h *HealthCheckHandler) SubmitHealthCheck(c *gin.Context) {
 			})
 			return
 		}
+	}
+
+	// Only the authenticated user may submit on their own behalf; a caller must never be able to
+	// submit (and, below, trigger draft cleanup for) another user's identity.
+	authUserID, ok := middleware.GetUserIDFromContext(c)
+	if !ok || authUserID != req.UserID {
+		telemetry.SetSpanError(span, fmt.Errorf("submitting user does not match authenticated user"))
+		log.Warn("rejected health check submission: userId does not match authenticated user")
+		c.JSON(http.StatusForbidden, dto.ErrorResponse{
+			Error: "Access denied: cannot submit a health check for another user",
+		})
+		return
 	}
 
 	// Set span attributes for business context
@@ -186,10 +199,13 @@ func (h *HealthCheckHandler) SubmitHealthCheck(c *gin.Context) {
 		"dimension_count":   len(req.Responses),
 	}).Info("health check submitted successfully")
 
-	// Best-effort cleanup of the matching in-progress draft now that the submission succeeded.
-	// If this fails, the draft simply becomes stale and is overwritten/ignored on next autosave.
-	if delErr := h.repository.DeleteDraft(ctx, session.UserID, session.TeamID, session.SurveyType); delErr != nil {
-		log.WithError(delErr).Warn("failed to delete draft after successful submission")
+	// Best-effort cleanup of the matching in-progress draft, but only for a *completed*
+	// submission: an incomplete session (Completed == false) hasn't replaced the user's
+	// in-progress answers, so the draft must be preserved for them to resume later.
+	if session.Completed {
+		if delErr := h.repository.DeleteDraft(ctx, session.UserID, session.TeamID, session.SurveyType); delErr != nil {
+			log.WithError(delErr).Warn("failed to delete draft after successful submission")
+		}
 	}
 
 	// Fire async email notification (never blocks the response)
@@ -397,7 +413,7 @@ func (h *HealthCheckHandler) GetAssessmentPeriods(c *gin.Context) {
 // SaveDraft handles PUT /api/v1/health-checks/draft
 //
 // @Summary Save or update an in-progress survey draft
-// @Description Upserts the authenticated user's in-progress survey answers for a team and assessment period, so progress can be resumed on another browser or device. Only the authenticated user may save their own draft. Concurrent saves are resolved last-write-wins using the client-supplied clientUpdatedAt timestamp: an update older than what is already stored is silently ignored rather than overwriting newer data.
+// @Description Upserts the authenticated user's in-progress survey answers for a team and assessment period, so progress can be resumed on another browser or device. Only the authenticated user may save their own draft. Writes always apply (last write wins by arrival order at the database) -- only one user is ever editing their own draft, so there is nothing to reconcile a conflict against.
 // @Tags Health Checks
 // @Accept json
 // @Produce json
@@ -444,8 +460,15 @@ func (h *HealthCheckHandler) SaveDraft(c *gin.Context) {
 
 	draft, err := h.saveDraftHandler.Handle(ctx, cmd)
 	if err != nil {
-		log.WithError(err).Warn("failed to save draft")
-		dto.RespondError(c, http.StatusBadRequest, err.Error())
+		var validationErr *commands.ValidationError
+		if errors.As(err, &validationErr) {
+			log.WithError(err).Warn("invalid draft save request")
+			dto.RespondError(c, http.StatusBadRequest, validationErr.Error())
+			return
+		}
+
+		log.WithError(err).Error("failed to save draft")
+		dto.RespondError(c, http.StatusInternalServerError, "Failed to save draft")
 		return
 	}
 
@@ -491,11 +514,13 @@ func (h *HealthCheckHandler) GetDraft(c *gin.Context) {
 		SurveyType: surveyType,
 	})
 	if err != nil {
-		if err == healthcheck.ErrDraftNotFound {
+		if errors.Is(err, healthcheck.ErrDraftNotFound) {
 			dto.RespondError(c, http.StatusNotFound, "No draft found")
 			return
 		}
-		dto.RespondError(c, http.StatusInternalServerError, err.Error())
+		log := logger.Get().WithContext(ctx)
+		log.WithError(err).Error("failed to fetch draft")
+		dto.RespondError(c, http.StatusInternalServerError, "Failed to fetch draft")
 		return
 	}
 

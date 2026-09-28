@@ -416,8 +416,7 @@ var _ = Describe("HealthCheckRepository", func() {
 				}
 
 				// When: Saving the draft
-				err := repository.SaveDraft(ctx, draft)
-				Expect(err).NotTo(HaveOccurred())
+				Expect(repository.SaveDraft(ctx, draft)).To(Succeed())
 
 				// Then: It should be retrievable by its natural key
 				retrieved, err := repository.GetDraft(ctx, "user123", "team1", healthcheck.SurveyTypeIndividual)
@@ -436,21 +435,19 @@ var _ = Describe("HealthCheckRepository", func() {
 			})
 		})
 
-		Context("when a newer save follows an older one", func() {
-			It("should overwrite the stored draft", func() {
+		Context("when a second save follows the first", func() {
+			It("should always overwrite the stored draft (last write wins)", func() {
 				first := &healthcheck.HealthCheckDraft{
 					TeamID: "team2", UserID: "user456", SurveyType: healthcheck.SurveyTypeIndividual,
 					AssessmentPeriod: "2024 - 2nd Half", CurrentDimension: 0,
-					Responses:       []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
-					ClientUpdatedAt: 100,
+					Responses: []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
 				}
 				Expect(repository.SaveDraft(ctx, first)).To(Succeed())
 
 				second := &healthcheck.HealthCheckDraft{
 					TeamID: "team2", UserID: "user456", SurveyType: healthcheck.SurveyTypeIndividual,
 					AssessmentPeriod: "2024 - 2nd Half", CurrentDimension: 1,
-					Responses:       []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 3}},
-					ClientUpdatedAt: 200,
+					Responses: []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 3}},
 				}
 				Expect(repository.SaveDraft(ctx, second)).To(Succeed())
 
@@ -461,42 +458,17 @@ var _ = Describe("HealthCheckRepository", func() {
 			})
 		})
 
-		Context("when an older (stale) save arrives after a newer one", func() {
-			It("should be ignored, leaving the newer draft intact", func() {
-				newer := &healthcheck.HealthCheckDraft{
-					TeamID: "team3", UserID: "user789", SurveyType: healthcheck.SurveyTypeIndividual,
-					AssessmentPeriod: "2024 - 2nd Half", CurrentDimension: 5,
-					Responses:       []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 3}},
-					ClientUpdatedAt: 500,
-				}
-				Expect(repository.SaveDraft(ctx, newer)).To(Succeed())
-
-				stale := &healthcheck.HealthCheckDraft{
-					TeamID: "team3", UserID: "user789", SurveyType: healthcheck.SurveyTypeIndividual,
-					AssessmentPeriod: "2024 - 2nd Half", CurrentDimension: 0,
-					Responses:       []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
-					ClientUpdatedAt: 100, // older than the already-stored 500
-				}
-				Expect(repository.SaveDraft(ctx, stale)).To(Succeed()) // no error, but silently dropped
-
-				retrieved, err := repository.GetDraft(ctx, "user789", "team3", healthcheck.SurveyTypeIndividual)
-				Expect(err).NotTo(HaveOccurred())
-				Expect(retrieved.CurrentDimension).To(Equal(5))
-				Expect(retrieved.Responses[0].Score).To(Equal(3))
-			})
-		})
-
 		Context("when individual and post_workshop drafts exist for the same user/team", func() {
 			It("should keep them independent", func() {
 				individual := &healthcheck.HealthCheckDraft{
 					TeamID: "team4", UserID: "user321", SurveyType: healthcheck.SurveyTypeIndividual,
-					AssessmentPeriod: "2024 - 2nd Half", ClientUpdatedAt: 100,
-					Responses: []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
+					AssessmentPeriod: "2024 - 2nd Half",
+					Responses:        []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
 				}
 				postWorkshop := &healthcheck.HealthCheckDraft{
 					TeamID: "team4", UserID: "user321", SurveyType: healthcheck.SurveyTypePostWorkshop,
-					AssessmentPeriod: "2024 - 2nd Half", ClientUpdatedAt: 100,
-					Responses: []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 3}},
+					AssessmentPeriod: "2024 - 2nd Half",
+					Responses:        []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 3}},
 				}
 				Expect(repository.SaveDraft(ctx, individual)).To(Succeed())
 				Expect(repository.SaveDraft(ctx, postWorkshop)).To(Succeed())
@@ -511,12 +483,62 @@ var _ = Describe("HealthCheckRepository", func() {
 			})
 		})
 
+		Context("when two users' natural keys could collide under naive dash-joining", func() {
+			It("should never read, overwrite, or delete each other's drafts", func() {
+				// "alice-bob" + "team-x" and "alice" + "bob-team-x" both produce the dash-joined
+				// string "alice-bob-team-x" — a naive `userID + "-" + teamID` id would collide.
+				draftA := &healthcheck.HealthCheckDraft{
+					TeamID: "team-x", UserID: "alice-bob", SurveyType: healthcheck.SurveyTypeIndividual,
+					AssessmentPeriod: "2024 - 2nd Half",
+					Responses:        []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
+				}
+				draftB := &healthcheck.HealthCheckDraft{
+					TeamID: "bob-team-x", UserID: "alice", SurveyType: healthcheck.SurveyTypeIndividual,
+					AssessmentPeriod: "2024 - 2nd Half",
+					Responses:        []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 3}},
+				}
+
+				Expect(repository.SaveDraft(ctx, draftA)).To(Succeed())
+				Expect(repository.SaveDraft(ctx, draftB)).To(Succeed())
+
+				// Each is readable independently by its own natural key.
+				retrievedA, err := repository.GetDraft(ctx, "alice-bob", "team-x", healthcheck.SurveyTypeIndividual)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(retrievedA.Responses[0].Score).To(Equal(1))
+
+				retrievedB, err := repository.GetDraft(ctx, "alice", "bob-team-x", healthcheck.SurveyTypeIndividual)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(retrievedB.Responses[0].Score).To(Equal(3))
+
+				// Overwriting A must never touch B.
+				updateA := &healthcheck.HealthCheckDraft{
+					TeamID: "team-x", UserID: "alice-bob", SurveyType: healthcheck.SurveyTypeIndividual,
+					AssessmentPeriod: "2024 - 2nd Half",
+					Responses:        []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 2}},
+				}
+				Expect(repository.SaveDraft(ctx, updateA)).To(Succeed())
+
+				retrievedBAfter, err := repository.GetDraft(ctx, "alice", "bob-team-x", healthcheck.SurveyTypeIndividual)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(retrievedBAfter.Responses[0].Score).To(Equal(3)) // unchanged
+
+				// Deleting A must never delete B.
+				Expect(repository.DeleteDraft(ctx, "alice-bob", "team-x", healthcheck.SurveyTypeIndividual)).To(Succeed())
+				_, err = repository.GetDraft(ctx, "alice-bob", "team-x", healthcheck.SurveyTypeIndividual)
+				Expect(err).To(MatchError(healthcheck.ErrDraftNotFound))
+
+				stillB, err := repository.GetDraft(ctx, "alice", "bob-team-x", healthcheck.SurveyTypeIndividual)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(stillB.Responses[0].Score).To(Equal(3))
+			})
+		})
+
 		Context("when deleting a draft", func() {
 			It("should remove it so GetDraft returns ErrDraftNotFound", func() {
 				draft := &healthcheck.HealthCheckDraft{
 					TeamID: "team5", UserID: "user999", SurveyType: healthcheck.SurveyTypeIndividual,
-					AssessmentPeriod: "2024 - 2nd Half", ClientUpdatedAt: 100,
-					Responses: []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
+					AssessmentPeriod: "2024 - 2nd Half",
+					Responses:        []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
 				}
 				Expect(repository.SaveDraft(ctx, draft)).To(Succeed())
 
@@ -535,12 +557,12 @@ var _ = Describe("HealthCheckRepository", func() {
 			It("submission cleanup (DeleteDraft) removes the draft so a resubmission starts fresh", func() {
 				draft := &healthcheck.HealthCheckDraft{
 					TeamID: "team6", UserID: "user111", SurveyType: healthcheck.SurveyTypeIndividual,
-					AssessmentPeriod: "2024 - 2nd Half", ClientUpdatedAt: 100,
-					Responses: []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
+					AssessmentPeriod: "2024 - 2nd Half",
+					Responses:        []healthcheck.HealthCheckResponse{{DimensionID: "mission", Score: 1}},
 				}
 				Expect(repository.SaveDraft(ctx, draft)).To(Succeed())
 
-				// Simulate what SubmitHealthCheck's handler does after a successful save
+				// Simulate what SubmitHealthCheck's handler does after a successful, completed save
 				Expect(repository.DeleteDraft(ctx, "user111", "team6", healthcheck.SurveyTypeIndividual)).To(Succeed())
 
 				_, err := repository.GetDraft(ctx, "user111", "team6", healthcheck.SurveyTypeIndividual)

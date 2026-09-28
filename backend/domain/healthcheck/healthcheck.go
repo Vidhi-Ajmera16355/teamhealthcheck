@@ -45,9 +45,11 @@ type HealthCheckDraft struct {
 	AssessmentPeriod string                `json:"assessmentPeriod"`
 	CurrentDimension int                   `json:"currentDimension"`
 	Responses        []HealthCheckResponse `json:"responses"`
-	// ClientUpdatedAt is a client-supplied epoch-millis timestamp used for last-write-wins
-	// ordering, so a stale save that arrives after a newer one never overwrites it.
-	ClientUpdatedAt int64  `json:"clientUpdatedAt"`
+	// ClientUpdatedAt is optional, client-supplied metadata (epoch-millis) used only for display
+	// (e.g. "saved 5s ago"). Saves always overwrite the stored draft (last write wins by arrival
+	// order at the database) — only one user is ever editing their own draft at a time, so there
+	// is nothing to reconcile a conflict against.
+	ClientUpdatedAt int64  `json:"clientUpdatedAt,omitempty"`
 	UpdatedAt       string `json:"updatedAt,omitempty"`
 }
 
@@ -98,7 +100,8 @@ type Repository interface {
 	FindDistinctAssessmentPeriods(ctx context.Context) ([]string, error)
 
 	// SaveDraft upserts an in-progress survey draft, keyed by (userID, teamID, surveyType).
-	// A save with a ClientUpdatedAt older than what is already stored is silently ignored.
+	// It always applies (last write wins by arrival order at the database) — only one user is
+	// ever editing their own draft, so there is no conflict to detect or reject.
 	SaveDraft(ctx context.Context, draft *HealthCheckDraft) error
 
 	// GetDraft returns the draft for the given user/team/surveyType, or ErrDraftNotFound if none exists.
